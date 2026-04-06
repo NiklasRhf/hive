@@ -1,11 +1,13 @@
 use crate::config::ProjectConfig;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 use std::process::Command;
 
 fn git(repo: &str, args: &[&str]) -> Result<String> {
     let output = Command::new("git")
-        .arg("-C").arg(repo).args(args)
+        .arg("-C")
+        .arg(repo)
+        .args(args)
         .output()
         .context("failed to run git")?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -18,8 +20,19 @@ fn detect_base_branch(repo: &str) -> String {
         .unwrap_or_else(|| "main".to_string())
 }
 
-pub fn create(project: &ProjectConfig, branch: &str) -> Result<PathBuf> {
-    let wt = project.worktree.as_ref().context("project has no worktree config")?;
+pub struct Progress {
+    pub ratio: f64,
+}
+
+pub fn create(
+    project: &ProjectConfig,
+    branch: &str,
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<PathBuf> {
+    let wt = project
+        .worktree
+        .as_ref()
+        .context("project has no worktree config")?;
     let session_name = format!("{}-{branch}", project.name);
     let wt_path = PathBuf::from(&wt.base).join(&session_name);
 
@@ -27,20 +40,46 @@ pub fn create(project: &ProjectConfig, branch: &str) -> Result<PathBuf> {
         return Ok(wt_path);
     }
 
+    let total_steps = 2 + wt.copy_dirs.len() + wt.copy_files.len();
+    let mut step = 0;
+
+    let mut advance = || {
+        step += 1;
+        on_progress(Progress {
+            ratio: step as f64 / total_steps as f64,
+        });
+    };
+
     let source = &project.path;
     let base_branch = detect_base_branch(source);
+
+    advance();
     let _ = git(source, &["fetch", "origin", &base_branch]);
 
+    advance();
     let origin_ref = format!("origin/{base_branch}");
     let wt_str = wt_path.to_string_lossy();
 
     let ok = Command::new("git")
-        .args(["-C", source, "worktree", "add", &wt_str, "-b", branch, &origin_ref])
+        .args([
+            "-C",
+            source,
+            "worktree",
+            "add",
+            &wt_str,
+            "-b",
+            branch,
+            &origin_ref,
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status();
 
     if !ok.is_ok_and(|s| s.success()) {
         let status = Command::new("git")
             .args(["-C", source, "worktree", "add", &wt_str, branch])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()
             .context("git worktree add failed")?;
         if !status.success() {
@@ -49,6 +88,7 @@ pub fn create(project: &ProjectConfig, branch: &str) -> Result<PathBuf> {
     }
 
     for dir in &wt.copy_dirs {
+        advance();
         let src = PathBuf::from(source).join(dir);
         let dst = wt_path.join(dir);
         if src.is_dir() {
@@ -57,10 +97,13 @@ pub fn create(project: &ProjectConfig, branch: &str) -> Result<PathBuf> {
     }
 
     for file in &wt.copy_files {
+        advance();
         let src = PathBuf::from(source).join(file);
         let dst = wt_path.join(file);
         if src.is_file() {
-            if let Some(parent) = dst.parent() { std::fs::create_dir_all(parent)?; }
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
             std::fs::copy(&src, &dst).with_context(|| format!("copying file {file}"))?;
         }
     }
@@ -69,7 +112,10 @@ pub fn create(project: &ProjectConfig, branch: &str) -> Result<PathBuf> {
 }
 
 pub fn remove(project: &ProjectConfig, session_name: &str) -> Result<()> {
-    let wt = project.worktree.as_ref().context("project has no worktree config")?;
+    let wt = project
+        .worktree
+        .as_ref()
+        .context("project has no worktree config")?;
     let wt_path = PathBuf::from(&wt.base).join(session_name);
 
     if !wt_path.is_dir() {
@@ -78,7 +124,14 @@ pub fn remove(project: &ProjectConfig, session_name: &str) -> Result<()> {
 
     let wt_str = wt_path.to_string_lossy();
     let ok = Command::new("git")
-        .args(["-C", &project.path, "worktree", "remove", "--force", &wt_str])
+        .args([
+            "-C",
+            &project.path,
+            "worktree",
+            "remove",
+            "--force",
+            &wt_str,
+        ])
         .status();
 
     if !ok.is_ok_and(|s| s.success()) {

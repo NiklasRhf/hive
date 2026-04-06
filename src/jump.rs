@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal;
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, Paragraph};
-use ratatui::Terminal;
 use std::io;
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -16,8 +16,7 @@ struct Notification {
 }
 
 fn load_notifications() -> Result<Vec<Notification>> {
-    let content = std::fs::read_to_string(crate::NOTIF_FILE)
-        .context("no notifications file")?;
+    let content = std::fs::read_to_string(crate::NOTIF_FILE).context("no notifications file")?;
     Ok(serde_json::from_str(&content)?)
 }
 
@@ -58,12 +57,25 @@ fn run_loop(
         let count = notifs.len();
 
         terminal.draw(|f| {
+            const LOGO: [&str; 3] = [
+                "█ █  █  █   █  ████",
+                "███  █   █ █   █▄▄ ",
+                "█ █  █    █    ████",
+            ];
+
             let chunks = Layout::vertical([
+                Constraint::Length(3),
                 Constraint::Min(1),
                 Constraint::Length(1),
                 Constraint::Length(1),
             ])
             .split(f.area());
+
+            let logo_lines: Vec<Line> = LOGO
+                .iter()
+                .map(|l| Line::from(Span::styled(*l, Style::default().fg(Color::Cyan))))
+                .collect();
+            f.render_widget(Paragraph::new(logo_lines), chunks[0]);
 
             let items: Vec<ListItem> = notifs
                 .iter()
@@ -81,15 +93,16 @@ fn run_loop(
                 })
                 .collect();
 
-            let visible_count = items.len().min(chunks[0].height as usize);
+            let list_area = chunks[1];
+            let visible_count = items.len().min(list_area.height as usize);
             let skip = items.len().saturating_sub(visible_count);
             let visible_items: Vec<ListItem> = items.into_iter().skip(skip).collect();
             f.render_widget(
                 List::new(visible_items),
                 ratatui::layout::Rect {
-                    y: chunks[0].y + chunks[0].height.saturating_sub(visible_count as u16),
+                    y: list_area.y + list_area.height.saturating_sub(visible_count as u16),
                     height: visible_count as u16,
-                    ..chunks[0]
+                    ..list_area
                 },
             );
 
@@ -98,7 +111,7 @@ fn run_loop(
                     format!(" {} notification(s)", count),
                     Style::default().fg(Color::Cyan),
                 ))),
-                chunks[1],
+                chunks[2],
             );
 
             f.render_widget(
@@ -106,7 +119,7 @@ fn run_loop(
                     "enter: jump | d: delete | esc: close",
                     Style::default().fg(Color::Green),
                 ))),
-                chunks[2],
+                chunks[3],
             );
         })?;
 
@@ -133,10 +146,16 @@ fn run_loop(
                         return Ok(());
                     }
                 }
-                (_, KeyCode::Up) => selected = selected.saturating_sub(1),
-                (_, KeyCode::Down) => {
-                    if selected + 1 < notifs.len() {
-                        selected += 1;
+                (_, KeyCode::Up) | (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                    let len = notifs.len();
+                    if len > 0 {
+                        selected = (selected + len - 1) % len;
+                    }
+                }
+                (_, KeyCode::Down) | (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                    let len = notifs.len();
+                    if len > 0 {
+                        selected = (selected + 1) % len;
                     }
                 }
                 _ => {}

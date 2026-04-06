@@ -4,12 +4,12 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use nucleo::{Config as NucleoConfig, Nucleo};
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, Paragraph};
-use ratatui::Terminal;
+use ratatui::widgets::{Gauge, List, ListItem, Paragraph};
 use std::io;
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ enum Mode {
 
 enum PickerResult {
     Open(String),
-    NewSession(String, String),
+    SwitchTo(String),
     Quit,
 }
 
@@ -120,20 +120,22 @@ impl Picker {
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         match (key.modifiers, key.code) {
-            (KeyModifiers::CONTROL, KeyCode::Char('c')) | (_, KeyCode::Esc) => {
-                Some(Action::Quit)
-            }
+            (KeyModifiers::CONTROL, KeyCode::Char('c')) | (_, KeyCode::Esc) => Some(Action::Quit),
             (KeyModifiers::CONTROL, KeyCode::Char('d')) => self.selected_name().map(Action::Kill),
             (KeyModifiers::CONTROL, KeyCode::Char('n')) => Some(Action::NewSession),
             (KeyModifiers::CONTROL, KeyCode::Char('w')) => Some(Action::ToggleMode),
             (_, KeyCode::Enter) => self.selected_name().map(Action::Open),
-            (_, KeyCode::Up) => {
-                self.selected = self.selected.saturating_sub(1);
+            (_, KeyCode::Up) | (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                let len = self.filtered.len();
+                if len > 0 {
+                    self.selected = (self.selected + len - 1) % len;
+                }
                 None
             }
-            (_, KeyCode::Down) => {
-                if self.selected + 1 < self.filtered.len() {
-                    self.selected += 1;
+            (_, KeyCode::Down) | (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                let len = self.filtered.len();
+                if len > 0 {
+                    self.selected = (self.selected + 1) % len;
                 }
                 None
             }
@@ -168,6 +170,20 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, picker: &Picker) 
     Ok(())
 }
 
+const LOGO: [&str; 3] = [
+    "█ █  █  █   █  ████",
+    "███  █   █ █   █▄▄ ",
+    "█ █  █    █    ████",
+];
+
+fn draw_logo(f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
+    let lines: Vec<Line> = LOGO
+        .iter()
+        .map(|l| Line::from(Span::styled(*l, Style::default().fg(Color::Cyan))))
+        .collect();
+    f.render_widget(Paragraph::new(lines), area);
+}
+
 fn draw_list_view(f: &mut ratatui::Frame, area: ratatui::layout::Rect, picker: &Picker) {
     let header_text = match picker.mode {
         Mode::All => "enter: open | ctrl-d: kill | ctrl-n: new | ctrl-w: worktrees",
@@ -175,15 +191,21 @@ fn draw_list_view(f: &mut ratatui::Frame, area: ratatui::layout::Rect, picker: &
     };
 
     let chunks = Layout::vertical([
+        Constraint::Length(3),
         Constraint::Min(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .split(area);
 
+    draw_logo(f, chunks[0]);
+
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(header_text, Style::default().fg(Color::Green)))),
-        chunks[2],
+        Paragraph::new(Line::from(Span::styled(
+            header_text,
+            Style::default().fg(Color::Green),
+        ))),
+        chunks[3],
     );
 
     f.render_widget(
@@ -191,7 +213,7 @@ fn draw_list_view(f: &mut ratatui::Frame, area: ratatui::layout::Rect, picker: &
             Span::styled("> ", Style::default().fg(Color::Cyan)),
             Span::raw(&picker.input),
         ])),
-        chunks[1],
+        chunks[2],
     );
 
     let items: Vec<ListItem> = picker
@@ -211,27 +233,32 @@ fn draw_list_view(f: &mut ratatui::Frame, area: ratatui::layout::Rect, picker: &
                 Style::default()
             };
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{} ", entry.icon()), Style::default().fg(icon_color)),
+                Span::styled(
+                    format!("{} ", entry.icon()),
+                    Style::default().fg(icon_color),
+                ),
                 Span::styled(entry.name.clone(), style),
             ]))
         })
         .collect();
 
-    let visible_count = items.len().min(chunks[0].height as usize);
+    let list_area = chunks[1];
+    let visible_count = items.len().min(list_area.height as usize);
     let skip = items.len().saturating_sub(visible_count);
     let visible_items: Vec<ListItem> = items.into_iter().skip(skip).collect();
     f.render_widget(
         List::new(visible_items),
         ratatui::layout::Rect {
-            y: chunks[0].y + chunks[0].height.saturating_sub(visible_count as u16),
+            y: list_area.y + list_area.height.saturating_sub(visible_count as u16),
             height: visible_count as u16,
-            ..chunks[0]
+            ..list_area
         },
     );
 }
 
 fn draw_input_view(f: &mut ratatui::Frame, area: ratatui::layout::Rect, label: &str, input: &str) {
     let chunks = Layout::vertical([
+        Constraint::Length(3),
         Constraint::Min(0),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -239,9 +266,14 @@ fn draw_input_view(f: &mut ratatui::Frame, area: ratatui::layout::Rect, label: &
     ])
     .split(area);
 
+    draw_logo(f, chunks[0]);
+
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(label, Style::default().fg(Color::White)))),
-        chunks[1],
+        Paragraph::new(Line::from(Span::styled(
+            label,
+            Style::default().fg(Color::White),
+        ))),
+        chunks[2],
     );
 
     f.render_widget(
@@ -249,7 +281,7 @@ fn draw_input_view(f: &mut ratatui::Frame, area: ratatui::layout::Rect, label: &
             Span::styled("> ", Style::default().fg(Color::Cyan)),
             Span::raw(input),
         ])),
-        chunks[2],
+        chunks[3],
     );
 
     f.render_widget(
@@ -257,8 +289,45 @@ fn draw_input_view(f: &mut ratatui::Frame, area: ratatui::layout::Rect, label: &
             "esc: back | enter: confirm",
             Style::default().fg(Color::Green),
         ))),
-        chunks[3],
+        chunks[4],
     );
+}
+
+fn draw_progress(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    title: &str,
+    ratio: f64,
+) -> Result<()> {
+    terminal.draw(|f| {
+        let chunks = Layout::vertical([
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(f.area());
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                title,
+                Style::default().fg(Color::White),
+            ))),
+            chunks[1],
+        );
+
+        f.render_widget(
+            Gauge::default()
+                .gauge_style(Style::default().fg(Color::Cyan))
+                .ratio(ratio.clamp(0.0, 1.0))
+                .label(Span::styled(
+                    format!("{}%", (ratio * 100.0).round() as u8),
+                    Style::default()
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD),
+                )),
+            chunks[2],
+        );
+    })?;
+    Ok(())
 }
 
 fn run_picker(config: &Config, use_alt_screen: bool) -> Result<Option<PickerResult>> {
@@ -339,8 +408,12 @@ fn picker_loop(
                             picker.view = View::NewBranchName(name, String::new());
                         }
                     }
-                    (_, KeyCode::Backspace) => { input.pop(); }
-                    (_, KeyCode::Char(c)) => { input.push(c); }
+                    (_, KeyCode::Backspace) => {
+                        input.pop();
+                    }
+                    (_, KeyCode::Char(c)) => {
+                        input.push(c);
+                    }
                     _ => {}
                 },
                 View::NewBranchName(project_name, input) => match (key.modifiers, key.code) {
@@ -350,10 +423,16 @@ fn picker_loop(
                     (_, KeyCode::Enter) => {
                         let name = project_name.clone();
                         let branch = input.trim().to_string();
-                        return Ok(Some(PickerResult::NewSession(name, branch)));
+                        let session_name =
+                            create_new_session_with_progress(terminal, &name, &branch, config)?;
+                        return Ok(Some(PickerResult::SwitchTo(session_name)));
                     }
-                    (_, KeyCode::Backspace) => { input.pop(); }
-                    (_, KeyCode::Char(c)) => { input.push(c); }
+                    (_, KeyCode::Backspace) => {
+                        input.pop();
+                    }
+                    (_, KeyCode::Char(c)) => {
+                        input.push(c);
+                    }
                     _ => {}
                 },
             }
@@ -371,24 +450,78 @@ fn create_and_open_session(name: &str, config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn create_new_session(name: &str, branch: &str, config: &Config) -> Result<String> {
-    if let Some(project) = config.find_project(name) {
-        if !branch.is_empty() && project.worktree.is_some() {
-            let wt_path = crate::worktree::create(project, branch)?;
-            let session_name = format!("{name}-{branch}");
-            let cmd = project.cmd.as_deref().unwrap_or("git status");
-            crate::tmux::create_project_session(&session_name, &wt_path.to_string_lossy(), cmd)?;
-            return Ok(session_name);
+fn animate_progress(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    title: &str,
+    target: &Arc<std::sync::Mutex<f64>>,
+    done: &Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::Ordering;
+    let mut current = 0.0f64;
+    let frame_dur = std::time::Duration::from_millis(16);
+
+    while !done.load(Ordering::Relaxed) || current < 0.999 {
+        let t = *target.lock().unwrap();
+        let goal = if done.load(Ordering::Relaxed) { 1.0 } else { t };
+        current += (goal - current) * 0.08;
+        if (goal - current).abs() < 0.005 {
+            current = goal;
         }
-        let session_name = if branch.is_empty() { name.to_string() } else { format!("{name}-{branch}") };
-        let cmd = project.cmd.as_deref().unwrap_or("git status");
-        crate::tmux::create_project_session(&session_name, &project.path, cmd)?;
-        Ok(session_name)
-    } else {
-        let session_name = if branch.is_empty() { name.to_string() } else { format!("{name}-{branch}") };
-        crate::tmux::create_project_session(&session_name, "~", "git status")?;
-        Ok(session_name)
+        let _ = draw_progress(terminal, title, current);
+        std::thread::sleep(frame_dur);
     }
+
+    let _ = draw_progress(terminal, title, 1.0);
+    std::thread::sleep(std::time::Duration::from_secs(1));
+}
+
+fn create_new_session_with_progress(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    name: &str,
+    branch: &str,
+    config: &Config,
+) -> Result<String> {
+    let session_name = if branch.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name}-{branch}")
+    };
+
+    let project = config.find_project(name);
+
+    let path = if let Some(p) = project {
+        if !branch.is_empty() && p.worktree.is_some() {
+            let target = Arc::new(std::sync::Mutex::new(0.0f64));
+            let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let target_clone = target.clone();
+            let done_clone = done.clone();
+            let pc = p.clone();
+            let b = branch.to_string();
+
+            let handle = std::thread::spawn(move || {
+                let result = crate::worktree::create(&pc, &b, &mut |prog| {
+                    *target_clone.lock().unwrap() = prog.ratio;
+                });
+                done_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                result
+            });
+
+            let title = format!("Creating worktree for {session_name}");
+            animate_progress(terminal, &title, &target, &done);
+
+            handle.join().unwrap()?.to_string_lossy().into_owned()
+        } else {
+            p.path.clone()
+        }
+    } else {
+        "~".to_string()
+    };
+
+    let cmd = project
+        .and_then(|p| p.cmd.as_deref())
+        .unwrap_or("git status");
+    crate::tmux::create_project_session(&session_name, &path, cmd)?;
+    Ok(session_name)
 }
 
 pub fn run(config: Config) -> Result<()> {
@@ -397,9 +530,8 @@ pub fn run(config: Config) -> Result<()> {
             create_and_open_session(&name, &config)?;
             crate::tmux::switch_client(&name)?;
         }
-        Some(PickerResult::NewSession(name, branch)) => {
-            let session_name = create_new_session(&name, &branch, &config)?;
-            crate::tmux::switch_client(&session_name)?;
+        Some(PickerResult::SwitchTo(name)) => {
+            crate::tmux::switch_client(&name)?;
         }
         Some(PickerResult::Quit) | None => {}
     }
@@ -412,10 +544,7 @@ pub fn run_and_return(config: &Config) -> Result<Option<String>> {
             create_and_open_session(&name, config)?;
             Ok(Some(name))
         }
-        Some(PickerResult::NewSession(name, branch)) => {
-            let session_name = create_new_session(&name, &branch, config)?;
-            Ok(Some(session_name))
-        }
+        Some(PickerResult::SwitchTo(name)) => Ok(Some(name)),
         Some(PickerResult::Quit) | None => Ok(None),
     }
 }

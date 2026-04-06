@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::process::Command;
 
 fn tmux(args: &[&str]) -> Result<String> {
@@ -65,10 +65,22 @@ pub fn create_project_session(name: &str, path: &str, cmd: &str) -> Result<()> {
     tmux_ok(&["send-keys", "-t", &format!("{name}:{run_win}"), cmd, "C-m"])?;
 
     tmux_ok(&["new-window", "-t", name, "-n", &claude_win, "-c", path])?;
-    tmux_ok(&["send-keys", "-t", &format!("{name}:{claude_win}"), "claude", "C-m"])?;
+    tmux_ok(&[
+        "send-keys",
+        "-t",
+        &format!("{name}:{claude_win}"),
+        "claude",
+        "C-m",
+    ])?;
 
     tmux_ok(&["new-window", "-t", name, "-n", &sh_win, "-c", path])?;
-    tmux_ok(&["send-keys", "-t", &format!("{name}:{sh_win}"), "git status", "C-m"])?;
+    tmux_ok(&[
+        "send-keys",
+        "-t",
+        &format!("{name}:{sh_win}"),
+        "git status",
+        "C-m",
+    ])?;
 
     Ok(())
 }

@@ -2,6 +2,7 @@ mod config;
 mod jump;
 mod picker;
 mod session;
+mod stats;
 mod tmux;
 mod watcher;
 mod worktree;
@@ -16,6 +17,7 @@ enum Cli {
     Launch,
     Pick,
     Jump,
+    Stats,
     Watch,
     Stop,
 }
@@ -36,6 +38,7 @@ fn main() -> Result<()> {
         Cli::Launch => launch(config),
         Cli::Pick => picker::run(config),
         Cli::Jump => jump::run(),
+        Cli::Stats => stats::run(),
         Cli::Watch => watcher::run(config),
         Cli::Stop => unreachable!(),
     }
@@ -70,14 +73,38 @@ fn launch(config: config::Config) -> Result<()> {
         jw = config.jump.width,
         jh = config.jump.height,
     );
+    let stats_cmd = format!(
+        "display-popup -E -w {}% -h {}% '{}' stats",
+        config.stats.width, config.stats.height, exe_str
+    );
 
     let status = Command::new("tmux")
         .args([
-            "new-session", "-A", "-s", &name, ";",
-            "bind-key", "-n", &config.keybindings.picker, "run-shell", "-b",
-            &format!("tmux {pick_cmd}"), ";",
-            "bind-key", "-n", &config.keybindings.jump, "run-shell", "-b",
+            "new-session",
+            "-A",
+            "-s",
+            &name,
+            ";",
+            "bind-key",
+            "-n",
+            &config.keybindings.picker,
+            "run-shell",
+            "-b",
+            &format!("tmux {pick_cmd}"),
+            ";",
+            "bind-key",
+            "-n",
+            &config.keybindings.jump,
+            "run-shell",
+            "-b",
             &jump_cmd,
+            ";",
+            "bind-key",
+            "-n",
+            &config.keybindings.stats,
+            "run-shell",
+            "-b",
+            &format!("tmux {stats_cmd}"),
         ])
         .status()
         .context("failed to start tmux")?;
@@ -90,8 +117,8 @@ fn launch(config: config::Config) -> Result<()> {
 }
 
 fn stop() -> Result<()> {
-    let pid_str = std::fs::read_to_string(PID_FILE)
-        .context("watcher is not running (no PID file found)")?;
+    let pid_str =
+        std::fs::read_to_string(PID_FILE).context("watcher is not running (no PID file found)")?;
     let pid: i32 = pid_str.trim().parse().context("invalid PID file")?;
 
     let ret = unsafe { libc::kill(pid, libc::SIGTERM) };

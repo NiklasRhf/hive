@@ -8,12 +8,47 @@ pub struct Config {
     pub notifications: NotificationConfig,
     #[serde(default)]
     pub keybindings: KeybindingConfig,
-    #[serde(default)]
-    pub picker: PickerConfig,
-    #[serde(default)]
-    pub jump: JumpConfig,
+    #[serde(default = "default_picker_size")]
+    pub picker: PopupSize,
+    #[serde(default = "default_jump_size")]
+    pub jump: PopupSize,
+    #[serde(default = "default_stats_size")]
+    pub stats: PopupSize,
     #[serde(default, rename = "project")]
     pub projects: Vec<ProjectConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PopupSize {
+    #[serde(default = "default_popup_width")]
+    pub width: u8,
+    #[serde(default = "default_popup_height")]
+    pub height: u8,
+}
+
+fn default_popup_width() -> u8 {
+    60
+}
+fn default_popup_height() -> u8 {
+    50
+}
+fn default_picker_size() -> PopupSize {
+    PopupSize {
+        width: 60,
+        height: 60,
+    }
+}
+fn default_jump_size() -> PopupSize {
+    PopupSize {
+        width: 60,
+        height: 40,
+    }
+}
+fn default_stats_size() -> PopupSize {
+    PopupSize {
+        width: 70,
+        height: 50,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,64 +71,6 @@ impl Default for NotificationConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct KeybindingConfig {
-    #[serde(default = "default_picker_key")]
-    pub picker: String,
-    #[serde(default = "default_jump_key")]
-    pub jump: String,
-}
-
-impl Default for KeybindingConfig {
-    fn default() -> Self {
-        Self {
-            picker: default_picker_key(),
-            jump: default_jump_key(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PickerConfig {
-    #[serde(default = "default_picker_width")]
-    pub width: u8,
-    #[serde(default = "default_picker_height")]
-    pub height: u8,
-}
-
-impl Default for PickerConfig {
-    fn default() -> Self {
-        Self {
-            width: default_picker_width(),
-            height: default_picker_height(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct JumpConfig {
-    #[serde(default = "default_jump_width")]
-    pub width: u8,
-    #[serde(default = "default_jump_height")]
-    pub height: u8,
-}
-
-impl Default for JumpConfig {
-    fn default() -> Self {
-        Self {
-            width: default_jump_width(),
-            height: default_jump_height(),
-        }
-    }
-}
-
-fn default_picker_key() -> String {
-    "M-s".to_string()
-}
-fn default_jump_key() -> String {
-    "M-j".to_string()
-}
-
 fn default_x() -> i32 {
     1560
 }
@@ -103,17 +80,35 @@ fn default_y() -> i32 {
 fn default_notif_width() -> u16 {
     300
 }
-fn default_picker_width() -> u8 {
-    60
+
+#[derive(Debug, Deserialize)]
+pub struct KeybindingConfig {
+    #[serde(default = "default_picker_key")]
+    pub picker: String,
+    #[serde(default = "default_jump_key")]
+    pub jump: String,
+    #[serde(default = "default_stats_key")]
+    pub stats: String,
 }
-fn default_picker_height() -> u8 {
-    60
+
+impl Default for KeybindingConfig {
+    fn default() -> Self {
+        Self {
+            picker: default_picker_key(),
+            jump: default_jump_key(),
+            stats: default_stats_key(),
+        }
+    }
 }
-fn default_jump_width() -> u8 {
-    60
+
+fn default_picker_key() -> String {
+    "M-s".to_string()
 }
-fn default_jump_height() -> u8 {
-    40
+fn default_jump_key() -> String {
+    "M-n".to_string()
+}
+fn default_stats_key() -> String {
+    "M-g".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]

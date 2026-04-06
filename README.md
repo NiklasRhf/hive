@@ -1,6 +1,6 @@
 # hive
 
-A tmux session manager with transparent notification overlay for Claude Code instances.
+A tmux session manager with notification overlay for Claude Code instances.
 
 Manages multiple Claude Code workers from one place — session creation, git worktrees, fuzzy picker, and non-intrusive X11 notifications when instances finish or need input.
 
@@ -8,7 +8,7 @@ Manages multiple Claude Code workers from one place — session creation, git wo
 
 - **Session picker** with fuzzy search (nucleo) inside a tmux popup
 - **Git worktree** creation and cleanup per project
-- **Notification overlay** — transparent, click-through X11 window positioned in the top-right of your terminal
+- **Notification overlay** — click-through X11 window positioned in the top-right of your terminal
 - **Idle detection** — detects when Claude Code finishes a task (no activity for 45s)
 - **Notification persistence** — notifications stay until you visit the tmux window or delete them manually
 
@@ -22,7 +22,7 @@ cargo install --path .
 
 - tmux (>= 3.2 for display-popup)
 - libcairo (for notification text rendering)
-- X11 with a compositor (picom/compton) for transparency
+- X11
 
 ## Usage
 

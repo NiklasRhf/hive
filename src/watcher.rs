@@ -12,6 +12,7 @@ use x11rb::protocol::xproto::*;
 const STATUS_DIR: &str = "/tmp";
 const STATUS_PREFIX: &str = "claude-status-";
 
+const LOGO_HEIGHT: f64 = 24.0;
 const CARD_PADDING: f64 = 10.0;
 const CARD_MARGIN: f64 = 4.0;
 const CARD_ROUNDING: f64 = 6.0;
@@ -66,7 +67,10 @@ impl WatcherState {
         let before = self.notifications.len();
         self.notifications.retain(|n| !active.contains(&n.pane));
         if self.notifications.len() != before {
-            eprintln!("watcher: dismissed notifications for {:?} (visited)", active);
+            eprintln!(
+                "watcher: dismissed notifications for {:?} (visited)",
+                active
+            );
         }
     }
 
@@ -76,7 +80,8 @@ impl WatcherState {
                 let file_panes: std::collections::HashSet<&str> =
                     file_notifs.iter().map(|n| n.pane.as_str()).collect();
                 let before = self.notifications.len();
-                self.notifications.retain(|n| file_panes.contains(n.pane.as_str()));
+                self.notifications
+                    .retain(|n| file_panes.contains(n.pane.as_str()));
                 if self.notifications.len() != before {
                     eprintln!("watcher: synced deletions from file");
                 }
@@ -104,6 +109,26 @@ impl WatcherState {
     }
 }
 
+fn log_event(pane: &str, status: &str) {
+    use std::io::Write;
+    let data_dir = dirs::data_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    let history_dir = data_dir.join("hive");
+    let _ = std::fs::create_dir_all(&history_dir);
+    let path = history_dir.join("history.jsonl");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let event = serde_json::json!({
+            "ts": chrono::Utc::now().to_rfc3339(),
+            "pane": pane,
+            "status": status,
+        });
+        let _ = writeln!(f, "{}", event);
+    }
+}
+
 fn poll_status_file(path: &std::path::Path) -> Option<(String, String)> {
     let filename = path.file_name()?.to_str()?;
     let pane = filename.strip_prefix(STATUS_PREFIX)?;
@@ -125,7 +150,11 @@ fn watcher_thread(state: SharedState) {
             if let Ok(event) = event {
                 if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
                     for path in event.paths {
-                        if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(STATUS_PREFIX)) {
+                        if path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| n.starts_with(STATUS_PREFIX))
+                        {
                             let _ = tx.send(path);
                         }
                     }
@@ -139,7 +168,10 @@ fn watcher_thread(state: SharedState) {
             }
         };
 
-    if let Err(e) = watcher.watch(std::path::Path::new(STATUS_DIR), RecursiveMode::NonRecursive) {
+    if let Err(e) = watcher.watch(
+        std::path::Path::new(STATUS_DIR),
+        RecursiveMode::NonRecursive,
+    ) {
         eprintln!("watcher: failed to watch {STATUS_DIR}: {e}");
         return;
     }
@@ -174,7 +206,11 @@ fn watcher_thread(state: SharedState) {
 fn process_existing_files(state: &mut WatcherState) {
     if let Ok(entries) = std::fs::read_dir(STATUS_DIR) {
         for entry in entries.flatten() {
-            if entry.file_name().to_str().is_some_and(|n| n.starts_with(STATUS_PREFIX)) {
+            if entry
+                .file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with(STATUS_PREFIX))
+            {
                 if let Some((pane, status)) = poll_status_file(&entry.path()) {
                     handle_status_change(&pane, &status, state);
                 }
@@ -184,26 +220,50 @@ fn process_existing_files(state: &mut WatcherState) {
 }
 
 fn handle_status_change(pane: &str, status: &str, state: &mut WatcherState) {
-    let prev = state.pane_states.get(pane).map(|s| s.status.clone()).unwrap_or(PaneStatus::Idle);
+    let prev = state
+        .pane_states
+        .get(pane)
+        .map(|s| s.status.clone())
+        .unwrap_or(PaneStatus::Idle);
     let active = crate::tmux::active_windows();
     let is_active = active.iter().any(|a| a == pane);
     let now = Instant::now();
 
+    log_event(pane, status);
+
     match status {
         "working" => {
-            state.pane_states.insert(pane.to_string(), PaneState { status: PaneStatus::Running, last_activity: now });
+            state.pane_states.insert(
+                pane.to_string(),
+                PaneState {
+                    status: PaneStatus::Running,
+                    last_activity: now,
+                },
+            );
         }
         "waiting" => {
             if prev != PaneStatus::Waiting && !is_active {
-                state.add_notification(pane, format_notification("Waiting for input", pane));
+                state.add_notification(pane, format_notification("waiting for input", pane));
             }
-            state.pane_states.insert(pane.to_string(), PaneState { status: PaneStatus::Waiting, last_activity: now });
+            state.pane_states.insert(
+                pane.to_string(),
+                PaneState {
+                    status: PaneStatus::Waiting,
+                    last_activity: now,
+                },
+            );
         }
         "done" => {
             if prev != PaneStatus::Done && !is_active {
-                state.add_notification(pane, format_notification("Finished", pane));
+                state.add_notification(pane, format_notification("finished", pane));
             }
-            state.pane_states.insert(pane.to_string(), PaneState { status: PaneStatus::Done, last_activity: now });
+            state.pane_states.insert(
+                pane.to_string(),
+                PaneState {
+                    status: PaneStatus::Done,
+                    last_activity: now,
+                },
+            );
         }
         _ => {}
     }
@@ -213,29 +273,37 @@ fn check_idle_panes(state: &mut WatcherState) {
     let active = crate::tmux::active_windows();
     let now = Instant::now();
 
-    let idle: Vec<String> = state.pane_states.iter()
-        .filter(|(_, ps)| ps.status == PaneStatus::Running && now.duration_since(ps.last_activity) >= IDLE_TIMEOUT)
+    let idle: Vec<String> = state
+        .pane_states
+        .iter()
+        .filter(|(_, ps)| {
+            ps.status == PaneStatus::Running && now.duration_since(ps.last_activity) >= IDLE_TIMEOUT
+        })
         .map(|(pane, _)| pane.clone())
         .collect();
 
     for pane in idle {
-        eprintln!("watcher: {pane} idle for {}s, marking done", IDLE_TIMEOUT.as_secs());
+        eprintln!(
+            "watcher: {pane} idle for {}s, marking done",
+            IDLE_TIMEOUT.as_secs()
+        );
+        log_event(&pane, "idle_done");
         if !active.contains(&pane) {
-            state.add_notification(&pane, format_notification("Finished", &pane));
+            state.add_notification(&pane, format_notification("finished", &pane));
         }
-        state.pane_states.insert(pane, PaneState { status: PaneStatus::Done, last_activity: now });
+        state.pane_states.insert(
+            pane,
+            PaneState {
+                status: PaneStatus::Done,
+                last_activity: now,
+            },
+        );
     }
 }
 
 fn format_notification(status: &str, pane: &str) -> String {
-    if let Some((session, index)) = pane.rsplit_once(':') {
-        format!("[{index}] {status} in {session}")
-    } else {
-        format!("{status} in {pane}")
-    }
+    format!("Claude {status} in {pane}")
 }
-
-// --- X11 overlay ---
 
 fn find_argb_visual(screen: &Screen) -> Option<(Visualid, u8)> {
     for depth_info in &screen.allowed_depths {
@@ -256,7 +324,11 @@ fn terminal_window_id() -> Option<Window> {
 
 fn window_geometry(conn: &impl Connection, win: Window) -> Option<(i16, i16, u16, u16)> {
     let geo = conn.get_geometry(win).ok()?.reply().ok()?;
-    let trans = conn.translate_coordinates(win, geo.root, 0, 0).ok()?.reply().ok()?;
+    let trans = conn
+        .translate_coordinates(win, geo.root, 0, 0)
+        .ok()?
+        .reply()
+        .ok()?;
     Some((trans.dst_x, trans.dst_y, geo.width, geo.height))
 }
 
@@ -295,13 +367,26 @@ fn run_x11_overlay(
 
     let (win_x, win_y) = terminal_win
         .and_then(|tw| window_geometry(&conn, tw))
-        .map(|(tx, ty, tw_w, _)| (tx + tw_w as i16 - win_width as i16 - NOTIF_MARGIN, ty + NOTIF_MARGIN))
+        .map(|(tx, ty, tw_w, _)| {
+            (
+                tx + tw_w as i16 - win_width as i16 - NOTIF_MARGIN,
+                ty + NOTIF_MARGIN,
+            )
+        })
         .unwrap_or((fallback_x, fallback_y));
 
     let win = conn.generate_id()?;
     conn.create_window(
-        depth, win, screen.root, win_x, win_y, win_width, 1, 0,
-        WindowClass::INPUT_OUTPUT, visual_id,
+        depth,
+        win,
+        screen.root,
+        win_x,
+        win_y,
+        win_width,
+        1,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        visual_id,
         &CreateWindowAux::new()
             .override_redirect(1)
             .background_pixel(0x00000000)
@@ -310,7 +395,16 @@ fn run_x11_overlay(
             .event_mask(EventMask::EXPOSURE),
     )?;
 
-    shape::rectangles(&conn, shape::SO::SET, shape::SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[])?;
+    shape::rectangles(
+        &conn,
+        shape::SO::SET,
+        shape::SK::INPUT,
+        ClipOrdering::UNSORTED,
+        win,
+        0,
+        0,
+        &[],
+    )?;
 
     let gc = conn.generate_id()?;
     conn.create_gc(gc, win, &CreateGCAux::new())?;
@@ -331,7 +425,10 @@ fn run_x11_overlay(
                 let new_x = tx + tw_w as i16 - win_width as i16 - NOTIF_MARGIN;
                 let new_y = ty + NOTIF_MARGIN;
                 if (new_x, new_y) != last_pos {
-                    conn.configure_window(win, &ConfigureWindowAux::new().x(new_x as i32).y(new_y as i32))?;
+                    conn.configure_window(
+                        win,
+                        &ConfigureWindowAux::new().x(new_x as i32).y(new_y as i32),
+                    )?;
                     conn.flush()?;
                     last_pos = (new_x, new_y);
                 }
@@ -357,54 +454,71 @@ fn run_x11_overlay(
     }
 }
 
-fn wrap_text(cr: &cairo::Context, text: &str, max_width: f64) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut current = String::new();
+fn fit_text(cr: &cairo::Context, text: &str, max_width: f64) -> Vec<String> {
+    if cr.text_extents(text).unwrap().width() <= max_width {
+        return vec![text.to_string()];
+    }
 
-    for word in text.split(' ') {
-        let candidate = if current.is_empty() { word.to_string() } else { format!("{current} {word}") };
-        if cr.text_extents(&candidate).unwrap().width() > max_width && !current.is_empty() {
-            lines.push(current);
-            current = word.to_string();
-        } else {
-            current = candidate;
+    // Find best split point for line 1 (break on space)
+    let mut split = 0;
+    for (i, _) in text.char_indices() {
+        if cr.text_extents(&text[..i]).unwrap().width() > max_width {
+            break;
         }
-
-        while cr.text_extents(&current).unwrap().width() > max_width && current.len() > 1 {
-            let mut split = current.len();
-            while split > 1 {
-                split -= 1;
-                if cr.text_extents(&current[..split]).unwrap().width() <= max_width { break; }
+        if text.as_bytes().get(i) == Some(&b' ') {
+            split = i;
+        }
+    }
+    if split == 0 {
+        split = text.len().min(1);
+        for (i, _) in text.char_indices() {
+            if cr.text_extents(&text[..i]).unwrap().width() > max_width {
+                break;
             }
-            lines.push(current[..split].to_string());
-            current = current[split..].to_string();
+            split = i;
         }
     }
 
-    if !current.is_empty() { lines.push(current); }
-    if lines.is_empty() { lines.push(String::new()); }
+    let line1 = text[..split].trim_end().to_string();
+    let rest = text[split..].trim_start();
 
-    if lines.len() > 2 { lines.truncate(2); }
-    if lines.len() == 2 {
-        let last = &mut lines[1];
-        while cr.text_extents(&format!("{last}...")).unwrap().width() > max_width && last.len() > 1 {
-            last.pop();
-        }
-        *last = format!("{last}...");
+    if cr.text_extents(rest).unwrap().width() <= max_width {
+        return vec![line1, rest.to_string()];
     }
-    lines
+
+    // Truncate line 2, preserving the ":index" suffix
+    let suffix = rest.rsplit_once(':').map(|(_, s)| format!(":{s}")).unwrap_or_default();
+    let tail = format!("...{suffix}");
+    let body = if suffix.is_empty() { rest } else { rest.rsplit_once(':').unwrap().0 };
+
+    let mut end = body.len();
+    while end > 0 {
+        let candidate = format!("{}{tail}", &body[..end]);
+        if cr.text_extents(&candidate).unwrap().width() <= max_width {
+            return vec![line1, candidate];
+        }
+        end -= 1;
+    }
+
+    vec![line1, tail]
 }
 
 fn card_height(line_count: usize) -> f64 {
     CARD_VERT_PADDING + line_count as f64 * LINE_HEIGHT
 }
 
-fn compute_total_height(cr: &cairo::Context, notifications: &[Notification], win_width: u16) -> f64 {
+fn compute_total_height(
+    cr: &cairo::Context,
+    notifications: &[Notification],
+    win_width: u16,
+) -> f64 {
     let text_width = win_width as f64 - CARD_MARGIN * 2.0 - CARD_PADDING * 2.0;
-    let mut total = CARD_MARGIN;
+    let mut total = LOGO_HEIGHT + CARD_MARGIN;
     for (i, notif) in notifications.iter().enumerate() {
-        if i >= MAX_VISIBLE { break; }
-        total += card_height(wrap_text(cr, &notif.message, text_width).len()) + CARD_MARGIN;
+        if i >= MAX_VISIBLE {
+            break;
+        }
+        total += card_height(fit_text(cr, &notif.message, text_width).len()) + CARD_MARGIN;
     }
     total
 }
@@ -419,13 +533,19 @@ fn redraw(
 ) -> Result<()> {
     let s = state.lock().unwrap();
     let count = s.notifications.len().min(MAX_VISIBLE);
-    if count == 0 { return Ok(()); }
+    if count == 0 {
+        return Ok(());
+    }
 
     let width = win_width as i32;
 
     let measure = ImageSurface::create(Format::ARgb32, 1, 1).map_err(|e| anyhow::anyhow!("{e}"))?;
     let mcr = cairo::Context::new(&measure).map_err(|e| anyhow::anyhow!("{e}"))?;
-    mcr.select_font_face("monospace", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    mcr.select_font_face(
+        "monospace",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
     mcr.set_font_size(FONT_SIZE);
 
     let total_height = compute_total_height(&mcr, &s.notifications, win_width) as i32;
@@ -433,33 +553,67 @@ fn redraw(
 
     conn.configure_window(win, &ConfigureWindowAux::new().height(total_height as u32))?;
 
-    let mut surface = ImageSurface::create(Format::ARgb32, width, total_height).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut surface = ImageSurface::create(Format::ARgb32, width, total_height)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let cr = cairo::Context::new(&surface).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     cr.set_operator(cairo::Operator::Source);
-    cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
+    cr.set_source_rgba(0.22, 0.23, 0.26, 0.92);
     cr.paint().map_err(|e| anyhow::anyhow!("{e}"))?;
     cr.set_operator(cairo::Operator::Over);
 
-    cr.select_font_face("monospace", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face(
+        "monospace",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
+    cr.set_font_size(FONT_SIZE);
+
+    cr.select_font_face(
+        "monospace",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Bold,
+    );
+    cr.set_font_size(16.0);
+    cr.set_source_rgba(0.3, 0.7, 1.0, 1.0);
+    cr.move_to(CARD_MARGIN + CARD_PADDING, LOGO_HEIGHT * 0.75);
+    cr.show_text("hive").map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    cr.select_font_face(
+        "monospace",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
     cr.set_font_size(FONT_SIZE);
 
     let text_width = width as f64 - CARD_MARGIN * 2.0 - CARD_PADDING * 2.0;
-    let mut y = CARD_MARGIN;
+    let mut y = LOGO_HEIGHT + CARD_MARGIN;
 
     for (i, notif) in s.notifications.iter().enumerate() {
-        if i >= MAX_VISIBLE { break; }
+        if i >= MAX_VISIBLE {
+            break;
+        }
 
-        let lines = wrap_text(&cr, &notif.message, text_width);
+        let lines = fit_text(&cr, &notif.message, text_width);
         let h = card_height(lines.len());
 
-        rounded_rect(&cr, CARD_MARGIN, y, width as f64 - CARD_MARGIN * 2.0, h, CARD_ROUNDING);
+        rounded_rect(
+            &cr,
+            CARD_MARGIN,
+            y,
+            width as f64 - CARD_MARGIN * 2.0,
+            h,
+            CARD_ROUNDING,
+        );
         cr.set_source_rgba(0.25, 0.50, 0.85, 0.92);
         cr.fill().map_err(|e| anyhow::anyhow!("{e}"))?;
 
         cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
         for (li, line) in lines.iter().enumerate() {
-            cr.move_to(CARD_PADDING + CARD_MARGIN, y + CARD_VERT_PADDING * 0.5 + (li as f64 + 1.0) * LINE_HEIGHT - 4.0);
+            cr.move_to(
+                CARD_PADDING + CARD_MARGIN,
+                y + CARD_VERT_PADDING * 0.5 + (li as f64 + 1.0) * LINE_HEIGHT - 4.0,
+            );
             cr.show_text(line).map_err(|e| anyhow::anyhow!("{e}"))?;
         }
 
@@ -472,7 +626,18 @@ fn redraw(
     let stride = surface.stride() as usize;
     let data = surface.data().map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    conn.put_image(ImageFormat::Z_PIXMAP, win, gc, width as u16, total_height as u16, 0, 0, 0, depth, &data[..stride * total_height as usize])?;
+    conn.put_image(
+        ImageFormat::Z_PIXMAP,
+        win,
+        gc,
+        width as u16,
+        total_height as u16,
+        0,
+        0,
+        0,
+        depth,
+        &data[..stride * total_height as usize],
+    )?;
     conn.flush()?;
     Ok(())
 }
