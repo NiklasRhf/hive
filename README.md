@@ -2,6 +2,21 @@
 
 A tmux session manager with notification overlay for Claude Code instances.
 
+Think of it as a hive: you (the developer) are the hive mind, and each Claude Code instance is a worker. Workers go off and do their thing in their own tmux window, then communicate back via notifications when they finish a task or need your attention.
+
+## Why another one of these?
+
+Several tools cover the same problem space — running multiple Claude Code agents in parallel, each in its own isolated environment, with some way to know when they need you:
+
+- **[workmux](https://github.com/raine/workmux)** — terminal-only, git worktrees + tmux windows, supports multiple agents (claude, gemini, codex, etc.)
+- **[cmux](https://github.com/manaflow-ai/cmux)** — native macOS GUI built on Ghostty, with vertical tabs, split panes, an embedded browser and a socket API
+
+Both solve roughly the same thing hive does. I built hive because I wanted something that fits the way I actually work:
+
+- **tmux sessions + windows, not panes.** Panes split the screen and force you to look at multiple things at once. I keep more mental clarity by seeing one thing at a time, in full, and moving between windows.
+- **Jump-driven, not layout-driven.** Move between sessions via the fuzzy picker, jump straight to a worker from a notification, or bounce back and forth with `tmux switch-client -l`. The notification overlay tells me *which* worker needs attention; I jump there directly instead of scanning a sidebar.
+- **Lightweight and Linux/X11-native.** No GUI app, no Mac dependency — just a small Rust binary, tmux, and a click-through X11 overlay window.
+
 Manages multiple Claude Code workers from one place — session creation, git worktrees, fuzzy picker, and non-intrusive X11 notifications when instances finish or need input.
 
 ## Features
@@ -9,7 +24,8 @@ Manages multiple Claude Code workers from one place — session creation, git wo
 - **Session picker** with fuzzy search (nucleo) inside a tmux popup
 - **Git worktree** creation and cleanup per project
 - **Notification overlay** — click-through X11 window positioned in the top-right of your terminal
-- **Idle detection** — detects when Claude Code finishes a task (no activity for 45s)
+- **Notification jump list** — tmux popup showing all pending notifications; press Enter to jump straight to the worker that needs you
+- **Idle detection** — detects when Claude Code finishes a task
 - **Notification persistence** — notifications stay until you visit the tmux window or delete them manually
 
 ## Install
