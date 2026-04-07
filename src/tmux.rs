@@ -55,6 +55,10 @@ pub fn active_windows() -> Vec<String> {
         .collect()
 }
 
+pub fn create_blank_session(name: &str, path: &str) -> Result<()> {
+    tmux_ok(&["new-session", "-d", "-s", name, "-c", path])
+}
+
 pub fn create_project_session(name: &str, path: &str, cmd: &str) -> Result<()> {
     let prefix = &name[..1];
     let run_win = format!("{prefix}-run");

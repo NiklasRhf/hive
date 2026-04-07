@@ -1,8 +1,10 @@
 mod config;
+mod hooks;
 mod jump;
 mod picker;
 mod session;
 mod stats;
+mod status;
 mod tmux;
 mod watcher;
 mod worktree;
@@ -20,6 +22,11 @@ enum Cli {
     Stats,
     Watch,
     Stop,
+    /// Update the agent status for the current tmux pane (used by Claude hooks)
+    Status {
+        /// Status to record: working, waiting, or done
+        state: String,
+    },
 }
 
 const PID_FILE: &str = "/tmp/hive-watcher.pid";
@@ -28,8 +35,10 @@ const NOTIF_FILE: &str = "/tmp/hive-notifications.json";
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    if matches!(cli, Cli::Stop) {
-        return stop();
+    match &cli {
+        Cli::Stop => return stop(),
+        Cli::Status { state } => return status_cmd(state),
+        _ => {}
     }
 
     let config = config::Config::load()?;
@@ -40,13 +49,44 @@ fn main() -> Result<()> {
         Cli::Jump => jump::run(),
         Cli::Stats => stats::run(),
         Cli::Watch => watcher::run(config),
-        Cli::Stop => unreachable!(),
+        Cli::Stop | Cli::Status { .. } => unreachable!(),
     }
+}
+
+fn status_cmd(state: &str) -> Result<()> {
+    if !matches!(state, "working" | "waiting" | "done") {
+        anyhow::bail!("invalid status: {state} (expected working|waiting|done)");
+    }
+    let pane = current_pane().context("could not determine tmux pane")?;
+    status::write(&pane, state)?;
+    Ok(())
+}
+
+fn current_pane() -> Result<String> {
+    let mut cmd = Command::new("tmux");
+    cmd.arg("display-message").arg("-p");
+    if let Ok(pane) = std::env::var("TMUX_PANE") {
+        cmd.arg("-t").arg(pane);
+    }
+    cmd.arg("#S:#I");
+    let out = cmd.output().context("running tmux display-message")?;
+    if !out.status.success() {
+        anyhow::bail!("tmux display-message failed");
+    }
+    let pane = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if pane.is_empty() {
+        anyhow::bail!("tmux returned empty pane id");
+    }
+    Ok(pane)
 }
 
 fn launch(config: config::Config) -> Result<()> {
     let exe = std::env::current_exe().context("could not determine own binary path")?;
     let exe_str = exe.to_string_lossy();
+
+    if let Err(e) = hooks::ensure_installed() {
+        eprintln!("hive: could not verify claude hooks: {e:#}");
+    }
 
     Command::new(&exe)
         .arg("watch")

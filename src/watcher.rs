@@ -9,9 +9,6 @@ use x11rb::connection::Connection;
 use x11rb::protocol::shape;
 use x11rb::protocol::xproto::*;
 
-const STATUS_DIR: &str = "/tmp";
-const STATUS_PREFIX: &str = "claude-status-";
-
 const LOGO_HEIGHT: f64 = 24.0;
 const CARD_PADDING: f64 = 10.0;
 const CARD_MARGIN: f64 = 4.0;
@@ -130,16 +127,20 @@ fn log_event(pane: &str, status: &str) {
 }
 
 fn poll_status_file(path: &std::path::Path) -> Option<(String, String)> {
-    let filename = path.file_name()?.to_str()?;
-    let pane = filename.strip_prefix(STATUS_PREFIX)?;
-    let content = std::fs::read_to_string(path).ok()?;
-    let _ = std::fs::remove_file(path);
-    Some((pane.to_string(), content.trim().to_string()))
+    let entry = crate::status::read(path)?;
+    Some((entry.pane, entry.status))
 }
 
 fn watcher_thread(state: SharedState) {
+    let dir = crate::status::state_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("watcher: failed to create {}: {e}", dir.display());
+        return;
+    }
+
     {
         let mut s = state.lock().unwrap();
+        cleanup_stale_state();
         process_existing_files(&mut s);
     }
 
@@ -150,11 +151,7 @@ fn watcher_thread(state: SharedState) {
             if let Ok(event) = event {
                 if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
                     for path in event.paths {
-                        if path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .is_some_and(|n| n.starts_with(STATUS_PREFIX))
-                        {
+                        if path.extension().is_some_and(|x| x == "json") {
                             let _ = tx.send(path);
                         }
                     }
@@ -168,15 +165,12 @@ fn watcher_thread(state: SharedState) {
             }
         };
 
-    if let Err(e) = watcher.watch(
-        std::path::Path::new(STATUS_DIR),
-        RecursiveMode::NonRecursive,
-    ) {
-        eprintln!("watcher: failed to watch {STATUS_DIR}: {e}");
+    if let Err(e) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
+        eprintln!("watcher: failed to watch {}: {e}", dir.display());
         return;
     }
 
-    eprintln!("watcher: monitoring {STATUS_DIR}/{STATUS_PREFIX}*");
+    eprintln!("watcher: monitoring {}", dir.display());
 
     loop {
         {
@@ -204,17 +198,23 @@ fn watcher_thread(state: SharedState) {
 }
 
 fn process_existing_files(state: &mut WatcherState) {
-    if let Ok(entries) = std::fs::read_dir(STATUS_DIR) {
-        for entry in entries.flatten() {
-            if entry
-                .file_name()
-                .to_str()
-                .is_some_and(|n| n.starts_with(STATUS_PREFIX))
-            {
-                if let Some((pane, status)) = poll_status_file(&entry.path()) {
-                    handle_status_change(&pane, &status, state);
-                }
-            }
+    for path in crate::status::list() {
+        if let Some((pane, status)) = poll_status_file(&path) {
+            handle_status_change(&pane, &status, state);
+        }
+    }
+}
+
+fn cleanup_stale_state() {
+    let sessions: std::collections::HashSet<String> =
+        crate::tmux::list_sessions().into_iter().collect();
+    for path in crate::status::list() {
+        let Some(entry) = crate::status::read(&path) else {
+            continue;
+        };
+        let session = entry.pane.split(':').next().unwrap_or("");
+        if !sessions.contains(session) {
+            let _ = std::fs::remove_file(&path);
         }
     }
 }

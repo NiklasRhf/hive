@@ -404,8 +404,14 @@ fn picker_loop(
                         let name = input.trim().to_string();
                         if name.is_empty() {
                             picker.view = View::List;
-                        } else {
+                        } else if config.find_project(&name).is_some() {
                             picker.view = View::NewBranchName(name, String::new());
+                        } else {
+                            let home = dirs::home_dir()
+                                .map(|h| h.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| "~".to_string());
+                            crate::tmux::create_blank_session(&name, &home)?;
+                            return Ok(Some(PickerResult::SwitchTo(name)));
                         }
                     }
                     (_, KeyCode::Backspace) => {

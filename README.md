@@ -103,20 +103,22 @@ Where `{prefix}` is the first character of the session name.
 
 ## How notifications work
 
-The overlay monitors `/tmp/claude-status-*` files written by Claude Code hooks. Configure these hooks in `~/.claude/settings.json`:
+Claude Code hooks call `hive status <state>` (one of `working`, `waiting`, `done`). The CLI resolves the current tmux pane and writes a small JSON file to `$XDG_STATE_HOME/hive/panes/<pane>.json`. The overlay watches that directory and turns state changes into notifications.
+
+`hive launch` installs the hooks automatically the first time it runs — it reads `~/.claude/settings.json`, leaves any existing hooks alone, and appends the four hive entries (`PostToolUse`, `Stop`, `Notification`, `UserPromptSubmit`) only if they aren't already present. To install them by hand, the entries look like:
 
 ```json
 {
   "hooks": {
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "echo working > /tmp/claude-status-$(tmux display-message -p -t $TMUX_PANE '#S:#I')" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "echo done > /tmp/claude-status-$(tmux display-message -p -t $TMUX_PANE '#S:#I')" }] }],
-    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "echo waiting > /tmp/claude-status-$(tmux display-message -p -t $TMUX_PANE '#S:#I')" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "echo working > /tmp/claude-status-$(tmux display-message -p -t $TMUX_PANE '#S:#I')" }] }]
+    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "hive status working" }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "hive status done" }] }],
+    "Notification":     [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "hive status waiting" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "hive status working" }] }]
   }
 }
 ```
 
-The `-t $TMUX_PANE` is important — it ensures the status file is written for the correct window regardless of which window you're currently viewing.
+`hive status` reads `$TMUX_PANE` and passes it to `tmux display-message` so the right pane is recorded regardless of which window you're currently viewing.
 
 ### Notification lifecycle
 
@@ -134,4 +136,5 @@ The `-t $TMUX_PANE` is important — it ensures the status file is written for t
 | `pick` | Session picker (used internally by tmux keybinding) |
 | `jump` | Notification list (used internally by tmux keybinding) |
 | `watch` | Run the overlay (used internally by launch) |
+| `status <state>` | Record agent status for the current tmux pane (used by Claude hooks) |
 | `stop` | Stop the overlay process |
