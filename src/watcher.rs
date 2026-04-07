@@ -302,7 +302,9 @@ fn check_idle_panes(state: &mut WatcherState) {
 }
 
 fn format_notification(status: &str, pane: &str) -> String {
-    format!("Claude {status} in {pane}")
+    let mut chars = status.chars();
+    let head = chars.next().map(|c| c.to_ascii_uppercase()).unwrap_or_default();
+    format!("{head}{} in {pane}", chars.as_str())
 }
 
 fn find_argb_visual(screen: &Screen) -> Option<(Visualid, u8)> {

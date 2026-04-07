@@ -14,8 +14,40 @@ pub struct Config {
     pub jump: PopupSize,
     #[serde(default = "default_stats_size")]
     pub stats: PopupSize,
+    #[serde(default)]
+    pub dock: DockConfig,
     #[serde(default, rename = "project")]
     pub projects: Vec<ProjectConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DockConfig {
+    #[serde(default = "default_dock_width")]
+    pub width: u8,
+    #[serde(default = "default_dock_height")]
+    pub height: u8,
+    #[serde(default = "default_dock_position")]
+    pub position: String,
+}
+
+impl Default for DockConfig {
+    fn default() -> Self {
+        Self {
+            width: default_dock_width(),
+            height: default_dock_height(),
+            position: default_dock_position(),
+        }
+    }
+}
+
+fn default_dock_width() -> u8 {
+    20
+}
+fn default_dock_height() -> u8 {
+    70
+}
+fn default_dock_position() -> String {
+    "right".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +121,8 @@ pub struct KeybindingConfig {
     pub jump: String,
     #[serde(default = "default_stats_key")]
     pub stats: String,
+    #[serde(default = "default_dock_key")]
+    pub dock: String,
 }
 
 impl Default for KeybindingConfig {
@@ -97,6 +131,7 @@ impl Default for KeybindingConfig {
             picker: default_picker_key(),
             jump: default_jump_key(),
             stats: default_stats_key(),
+            dock: default_dock_key(),
         }
     }
 }
@@ -109,6 +144,9 @@ fn default_jump_key() -> String {
 }
 fn default_stats_key() -> String {
     "M-g".to_string()
+}
+fn default_dock_key() -> String {
+    "M-d".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]

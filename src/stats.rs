@@ -7,7 +7,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{BarChart, Paragraph};
+use ratatui::widgets::{Bar, BarChart, BarGroup, Paragraph};
 use std::collections::HashMap;
 use std::io;
 
@@ -195,21 +195,41 @@ fn run_loop(
                     chunks[2],
                 );
             } else {
+                const PALETTE: &[Color] = &[
+                    Color::Cyan,
+                    Color::Green,
+                    Color::Yellow,
+                    Color::Magenta,
+                    Color::Blue,
+                    Color::LightCyan,
+                    Color::LightGreen,
+                    Color::LightYellow,
+                    Color::LightMagenta,
+                    Color::LightBlue,
+                    Color::Red,
+                ];
+
                 let max_secs = stats.iter().map(|s| s.work_secs).max().unwrap_or(1).max(1) as u64;
-                let data: Vec<(&str, u64)> = stats
+                let bars: Vec<Bar> = stats
                     .iter()
-                    .map(|s| (s.name.as_str(), s.work_secs.max(0) as u64))
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let color = PALETTE[i % PALETTE.len()];
+                        Bar::default()
+                            .label(Line::from(s.name.as_str()))
+                            .value(s.work_secs.max(0) as u64)
+                            .style(Style::default().fg(color))
+                    })
                     .collect();
 
                 let bar_chart = BarChart::default()
-                    .data(&data)
-                    .bar_width(if data.len() > 0 {
-                        ((chunks[2].width as usize / data.len()).max(3).min(12)) as u16
+                    .data(BarGroup::default().bars(&bars))
+                    .bar_width(if !stats.is_empty() {
+                        ((chunks[2].width as usize / stats.len()).max(3).min(12)) as u16
                     } else {
                         5
                     })
                     .bar_gap(1)
-                    .bar_style(Style::default().fg(Color::Cyan))
                     .value_style(
                         Style::default()
                             .fg(Color::White)

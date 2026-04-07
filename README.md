@@ -4,19 +4,6 @@ A tmux session manager with notification overlay for Claude Code instances.
 
 Think of it as a hive: you (the developer) are the hive mind, and each Claude Code instance is a worker. Workers go off and do their thing in their own tmux window, then communicate back via notifications when they finish a task or need your attention.
 
-## Why another one of these?
-
-Several tools cover the same problem space — running multiple Claude Code agents in parallel, each in its own isolated environment, with some way to know when they need you:
-
-- **[workmux](https://github.com/raine/workmux)** — terminal-only, git worktrees + tmux windows, supports multiple agents (claude, gemini, codex, etc.)
-- **[cmux](https://github.com/manaflow-ai/cmux)** — native macOS GUI built on Ghostty, with vertical tabs, split panes, an embedded browser and a socket API
-
-Both solve roughly the same thing hive does. I built hive because I wanted something that fits the way I actually work:
-
-- **tmux sessions + windows, not panes.** Panes split the screen and force you to look at multiple things at once. I keep more mental clarity by seeing one thing at a time, in full, and moving between windows.
-- **Jump-driven, not layout-driven.** Move between sessions via the fuzzy picker, jump straight to a worker from a notification, or bounce back and forth with `tmux switch-client -l`. The notification overlay tells me *which* worker needs attention; I jump there directly instead of scanning a sidebar.
-- **Lightweight and Linux/X11-native.** No GUI app, no Mac dependency — just a small Rust binary, tmux, and a click-through X11 overlay window.
-
 Manages multiple Claude Code workers from one place — session creation, git worktrees, fuzzy picker, and non-intrusive X11 notifications when instances finish or need input.
 
 ## Features
@@ -25,8 +12,19 @@ Manages multiple Claude Code workers from one place — session creation, git wo
 - **Git worktree** creation and cleanup per project
 - **Notification overlay** — click-through X11 window positioned in the top-right of your terminal
 - **Notification jump list** — tmux popup showing all pending notifications; press Enter to jump straight to the worker that needs you
+- **Worker dock** — togglable sidebar popup showing every Claude instance, its state, feature/branch, project, cumulative working time, and most recent task; navigate with `Up`/`Down` (or `Ctrl-k`/`Ctrl-j`) and `Enter` to jump to that worker
+- **Stats dashboard** — bar chart of working time per session for today or the last 7 days
 - **Idle detection** — detects when Claude Code finishes a task
 - **Notification persistence** — notifications stay until you visit the tmux window or delete them manually
+
+## Supported agents
+
+hive is built around a simple interface: an agent calls `hive status working|waiting|done` whenever it changes state, and hive takes care of notifications, the dock, and stats.
+
+| Agent       | Out of the box         | Notes                                                                               |
+|-------------|------------------------|-------------------------------------------------------------------------------------|
+| Claude Code | Yes — hooks auto-installed | `hive launch` writes the four hook entries into `~/.claude/settings.json` on first run |
+| Any other CLI agent | Manual integration | Call `hive status working\|waiting\|done` from any lifecycle hook the tool exposes  |
 
 ## Install
 
@@ -67,7 +65,9 @@ These are bound automatically by `launch` (no tmux prefix needed):
 | Shortcut | Action |
 |----------|--------|
 | `Alt-s` | Open session picker |
-| `Alt-j` | Open notification list (only if notifications exist) |
+| `Alt-n` | Open notification list (only if notifications exist) |
+| `Alt-d` | Toggle worker dock |
+| `Alt-g` | Open stats dashboard |
 
 These are the defaults — configure them in `config.toml` under `[keybindings]`.
 
@@ -87,16 +87,49 @@ These are the defaults — configure them in `config.toml` under `[keybindings]`
 
 | Key | Action |
 |-----|--------|
-| `Up` / `Down` | Navigate |
+| `Up` / `Down` (or `Ctrl-k` / `Ctrl-j`) | Navigate |
 | `Enter` | Jump to that session/window |
 | `d` | Delete notification |
 | `Esc` | Close |
+
+### Worker Dock
+
+A toggle-able side popup showing every Claude instance the watcher has seen, whether or not it's currently active. Sleeping workers (Done/Idle without a pending notification) fade to gray; workers that still need your attention keep their accent color.
+
+| Key | Action |
+|-----|--------|
+| `Up` / `Down` (or `Ctrl-k` / `Ctrl-j`) | Navigate |
+| `Enter` | Jump to that worker's window (and close the dock) |
+| `Alt-d` / `Esc` / `q` | Close the dock |
 
 ## Configuration
 
 `~/.config/hive/config.toml`
 
 ```toml
+[keybindings]
+picker = "M-s"
+jump   = "M-n"
+stats  = "M-g"
+dock   = "M-d"
+
+[picker]
+width  = 60   # percent of terminal
+height = 60
+
+[jump]
+width  = 60
+height = 40
+
+[stats]
+width  = 70
+height = 50
+
+[dock]
+width    = 20
+height   = 70
+position = "right"   # "left" | "right"
+
 [[project]]
 name = "myproject"
 path = "~/Projects/myproject"
@@ -144,6 +177,8 @@ Claude Code hooks call `hive status <state>` (one of `working`, `waiting`, `done
 4. You navigate to that tmux window -> notification auto-dismissed
 5. Or press `d` in the notification list to delete manually
 
+The dock reads the same state, so a worker with a pending notification stays visually "alive" in the dock (accent color, bright text) until you visit it or dismiss it; once dismissed it grays out.
+
 ## Subcommands
 
 | Command | Description |
@@ -151,6 +186,8 @@ Claude Code hooks call `hive status <state>` (one of `working`, `waiting`, `done
 | `launch` | Main entry point — start tmux + overlay + picker |
 | `pick` | Session picker (used internally by tmux keybinding) |
 | `jump` | Notification list (used internally by tmux keybinding) |
+| `dock` | Worker dock TUI (used internally by tmux keybinding) |
+| `stats` | Stats dashboard (used internally by tmux keybinding) |
 | `watch` | Run the overlay (used internally by launch) |
-| `status <state>` | Record agent status for the current tmux pane (used by Claude hooks) |
+| `status <state>` | Record agent status for the current tmux pane (used by Claude hooks or other agents) |
 | `stop` | Stop the overlay process |

@@ -1,4 +1,5 @@
 mod config;
+mod dock;
 mod hooks;
 mod jump;
 mod picker;
@@ -22,6 +23,7 @@ enum Cli {
     Stats,
     Watch,
     Stop,
+    Dock,
     /// Update the agent status for the current tmux pane (used by Claude hooks)
     Status {
         /// Status to record: working, waiting, or done
@@ -49,6 +51,7 @@ fn main() -> Result<()> {
         Cli::Jump => jump::run(),
         Cli::Stats => stats::run(),
         Cli::Watch => watcher::run(config),
+        Cli::Dock => dock::run(config),
         Cli::Stop | Cli::Status { .. } => unreachable!(),
     }
 }
@@ -117,6 +120,15 @@ fn launch(config: config::Config) -> Result<()> {
         "display-popup -E -w {}% -h {}% '{}' stats",
         config.stats.width, config.stats.height, exe_str
     );
+    let dock_pos = match config.dock.position.as_str() {
+        "left" => " -x 0",
+        "right" => " -x R",
+        _ => "",
+    };
+    let dock_cmd = format!(
+        "display-popup -E -w {}% -h {}%{} '{}' dock",
+        config.dock.width, config.dock.height, dock_pos, exe_str
+    );
 
     let status = Command::new("tmux")
         .args([
@@ -145,6 +157,13 @@ fn launch(config: config::Config) -> Result<()> {
             "run-shell",
             "-b",
             &format!("tmux {stats_cmd}"),
+            ";",
+            "bind-key",
+            "-n",
+            &config.keybindings.dock,
+            "run-shell",
+            "-b",
+            &format!("tmux {dock_cmd}"),
         ])
         .status()
         .context("failed to start tmux")?;
