@@ -370,6 +370,15 @@ fn picker_loop(
                     Some(Action::Quit) => return Ok(Some(PickerResult::Quit)),
                     Some(Action::Open(name)) => return Ok(Some(PickerResult::Open(name))),
                     Some(Action::Kill(name)) => {
+                        if crate::tmux::current_session().as_deref() == Some(&*name) {
+                            let others: Vec<String> = crate::tmux::list_sessions()
+                                .into_iter()
+                                .filter(|s| s != &name)
+                                .collect();
+                            if let Some(target) = others.first() {
+                                let _ = crate::tmux::switch_client(target);
+                            }
+                        }
                         let _ = crate::tmux::kill_session(&name);
                         if picker.mode == Mode::WorktreesOnly {
                             let parent = name.split('-').next().unwrap_or(&name);
@@ -450,10 +459,27 @@ fn create_and_open_session(name: &str, config: &Config) -> Result<()> {
     if !crate::tmux::has_session(name) {
         if let Some(path) = session::resolve_path(name, config) {
             let cmd = session::resolve_cmd(name, config);
-            crate::tmux::create_project_session(name, &path.to_string_lossy(), &cmd)?;
+            crate::tmux::create_project_session(
+                name,
+                &path.to_string_lossy(),
+                &cmd,
+                panel_args(config).as_ref().map(|(w, p, e)| (*w, p.as_str(), e.as_str())),
+            )?;
         }
     }
     Ok(())
+}
+
+/// Returns `(width, position, exe)` for `create_project_session` if the panel
+/// is enabled in config, otherwise `None`. Borrowing dance: callers need
+/// `&str` slices, but we own owned `String`s here, so the result is held in
+/// a local and `as_ref().map(...)` is used at the call site.
+fn panel_args(config: &Config) -> Option<(u16, String, String)> {
+    if !config.panel.enabled {
+        return None;
+    }
+    let exe = std::env::current_exe().ok()?.to_string_lossy().into_owned();
+    Some((config.panel.width, config.panel.position.clone(), exe))
 }
 
 fn animate_progress(
@@ -526,7 +552,12 @@ fn create_new_session_with_progress(
     let cmd = project
         .and_then(|p| p.cmd.as_deref())
         .unwrap_or("git status");
-    crate::tmux::create_project_session(&session_name, &path, cmd)?;
+    crate::tmux::create_project_session(
+        &session_name,
+        &path,
+        cmd,
+        panel_args(config).as_ref().map(|(w, p, e)| (*w, p.as_str(), e.as_str())),
+    )?;
     Ok(session_name)
 }
 

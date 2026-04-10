@@ -8,42 +8,53 @@ fn settings_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude").join("settings.json"))
 }
 
-fn hook_command(status: &str) -> String {
-    format!("hive status {status}")
+fn hook_command(exe: &str, status: &str) -> String {
+    format!("{exe} status {status}")
 }
 
-fn make_hook_entry(status: &str, matcher: Option<&str>) -> Value {
+fn make_hook_entry(exe: &str, status: &str, matcher: Option<&str>) -> Value {
     let mut entry = serde_json::Map::new();
     if let Some(m) = matcher {
         entry.insert("matcher".to_string(), Value::String(m.to_string()));
     }
     entry.insert(
         "hooks".to_string(),
-        json!([{ "type": "command", "command": hook_command(status) }]),
+        json!([{ "type": "command", "command": hook_command(exe, status) }]),
     );
     Value::Object(entry)
 }
 
-fn event_already_installed(event_arr: &Value) -> bool {
-    let Some(arr) = event_arr.as_array() else {
+/// Returns true if a hive entry exists for this event. If `desired_cmd` is set,
+/// rewrites any matching command in-place so an older `hive status …` entry gets
+/// upgraded to the absolute-path form.
+fn event_already_installed(event_arr: &mut Value, desired_cmd: Option<&str>) -> bool {
+    let Some(arr) = event_arr.as_array_mut() else {
         return false;
     };
+    let mut found = false;
     for entry in arr {
-        let Some(hooks) = entry.get("hooks").and_then(|h| h.as_array()) else {
+        let Some(hooks) = entry.get_mut("hooks").and_then(|h| h.as_array_mut()) else {
             continue;
         };
         for h in hooks {
-            if let Some(cmd) = h.get("command").and_then(|c| c.as_str()) {
-                if cmd.contains(HIVE_HOOK_MARKER) {
-                    return true;
+            if let Some(cmd_val) = h.get_mut("command") {
+                if let Some(cmd) = cmd_val.as_str() {
+                    if cmd.contains(HIVE_HOOK_MARKER) {
+                        found = true;
+                        if let Some(want) = desired_cmd {
+                            if cmd != want {
+                                *cmd_val = Value::String(want.to_string());
+                            }
+                        }
+                    }
                 }
             }
         }
     }
-    false
+    found
 }
 
-pub fn ensure_installed() -> Result<()> {
+pub fn ensure_installed(exe: &str) -> Result<()> {
     let Some(path) = settings_path() else {
         return Ok(());
     };
@@ -61,7 +72,7 @@ pub fn ensure_installed() -> Result<()> {
         json!({})
     };
 
-    let events: [(&str, &str, Option<&str>); 4] = [
+    let events: [(&str, &str, Option<&str>); 5] = [
         ("PostToolUse", "working", None),
         ("Stop", "done", None),
         (
@@ -70,6 +81,7 @@ pub fn ensure_installed() -> Result<()> {
             Some("permission_prompt|elicitation_dialog"),
         ),
         ("UserPromptSubmit", "working", None),
+        ("SessionStart", "idle", None),
     ];
 
     let root = settings
@@ -83,31 +95,46 @@ pub fn ensure_installed() -> Result<()> {
         .context("~/.claude/settings.json `hooks` is not an object")?;
 
     let mut added = Vec::new();
+    let mut changed = false;
     for (event, status, matcher) in events {
         let event_entry = hooks_map
             .entry(event.to_string())
             .or_insert_with(|| Value::Array(Vec::new()));
-        if event_already_installed(event_entry) {
+        let desired = hook_command(exe, status);
+        let before = serde_json::to_string(event_entry).unwrap_or_default();
+        if event_already_installed(event_entry, Some(&desired)) {
+            let after = serde_json::to_string(event_entry).unwrap_or_default();
+            if before != after {
+                changed = true;
+            }
             continue;
         }
         if let Some(arr) = event_entry.as_array_mut() {
-            arr.push(make_hook_entry(status, matcher));
+            arr.push(make_hook_entry(exe, status, matcher));
             added.push(event);
+            changed = true;
         }
     }
 
-    if !added.is_empty() {
+    if changed {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
         let content = serde_json::to_string_pretty(&settings)?;
         std::fs::write(&path, content)
             .with_context(|| format!("writing {}", path.display()))?;
-        eprintln!(
-            "hive: installed claude notification hooks ({}) in {}",
-            added.join(", "),
-            path.display()
-        );
+        if added.is_empty() {
+            eprintln!(
+                "hive: updated claude notification hook commands in {}",
+                path.display()
+            );
+        } else {
+            eprintln!(
+                "hive: installed claude notification hooks ({}) in {}",
+                added.join(", "),
+                path.display()
+            );
+        }
     }
 
     Ok(())

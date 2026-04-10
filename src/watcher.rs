@@ -46,13 +46,15 @@ type SharedState = Arc<Mutex<WatcherState>>;
 struct WatcherState {
     pane_states: HashMap<String, PaneState>,
     notifications: Vec<Notification>,
+    sound: crate::config::SoundConfig,
 }
 
 impl WatcherState {
-    fn new() -> Self {
+    fn new(sound: crate::config::SoundConfig) -> Self {
         Self {
             pane_states: HashMap::new(),
             notifications: Vec::new(),
+            sound,
         }
     }
 
@@ -219,6 +221,15 @@ fn cleanup_stale_state() {
     }
 }
 
+fn play_sound(path: &str) {
+    let _ = std::process::Command::new("paplay")
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 fn handle_status_change(pane: &str, status: &str, state: &mut WatcherState) {
     let prev = state
         .pane_states
@@ -244,6 +255,11 @@ fn handle_status_change(pane: &str, status: &str, state: &mut WatcherState) {
         "waiting" => {
             if prev != PaneStatus::Waiting && !is_active {
                 state.add_notification(pane, format_notification("waiting for input", pane));
+                if state.sound.enabled {
+                    if let Some(ref path) = state.sound.waiting {
+                        play_sound(path);
+                    }
+                }
             }
             state.pane_states.insert(
                 pane.to_string(),
@@ -256,6 +272,11 @@ fn handle_status_change(pane: &str, status: &str, state: &mut WatcherState) {
         "done" => {
             if prev != PaneStatus::Done && !is_active {
                 state.add_notification(pane, format_notification("finished", pane));
+                if state.sound.enabled {
+                    if let Some(ref path) = state.sound.done {
+                        play_sound(path);
+                    }
+                }
             }
             state.pane_states.insert(
                 pane.to_string(),
@@ -290,6 +311,11 @@ fn check_idle_panes(state: &mut WatcherState) {
         log_event(&pane, "idle_done");
         if !active.contains(&pane) {
             state.add_notification(&pane, format_notification("finished", &pane));
+            if state.sound.enabled {
+                if let Some(ref path) = state.sound.done {
+                    play_sound(path);
+                }
+            }
         }
         state.pane_states.insert(
             pane,
@@ -338,18 +364,28 @@ pub fn run(config: Config) -> Result<()> {
     std::fs::write(crate::PID_FILE, std::process::id().to_string())
         .context("failed to write PID file")?;
 
-    let fallback_x = config.notifications.x as i16;
-    let fallback_y = config.notifications.y as i16;
-    let width = config.notifications.width;
-    let terminal_win = terminal_window_id();
-    let state: SharedState = Arc::new(Mutex::new(WatcherState::new()));
+    let state: SharedState = Arc::new(Mutex::new(WatcherState::new(config.sound.clone())));
 
     let state_clone = state.clone();
     std::thread::spawn(move || watcher_thread(state_clone));
 
-    let result = run_x11_overlay(state, terminal_win, fallback_x, fallback_y, width);
+    let result = if config.notifications.legacy {
+        let fallback_x = config.notifications.x as i16;
+        let fallback_y = config.notifications.y as i16;
+        let width = config.notifications.width;
+        let terminal_win = terminal_window_id();
+        run_x11_overlay(state, terminal_win, fallback_x, fallback_y, width)
+    } else {
+        run_headless(state)
+    };
     let _ = std::fs::remove_file(crate::PID_FILE);
     result
+}
+
+fn run_headless(_state: SharedState) -> Result<()> {
+    loop {
+        std::thread::sleep(Duration::from_secs(60));
+    }
 }
 
 fn run_x11_overlay(

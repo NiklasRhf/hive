@@ -31,3 +31,20 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Process management
 libc = "0.2"
+
+# Voice (opt-in via --features voice)
+whisper-rs = { version = "0.16", optional = true }
+cpal = { version = "0.15", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = { version = "0.12", optional = true }
+
+[features]
+default = []
+voice = ["dep:whisper-rs", "dep:cpal", "dep:evdev"]
+voice-cuda = ["voice", "whisper-rs/cuda"]
+voice-vulkan = ["voice", "whisper-rs/vulkan"]
+voice-hipblas = ["voice", "whisper-rs/hipblas"]
+voice-openblas = ["voice", "whisper-rs/openblas"]
+voice-metal = ["voice", "whisper-rs/metal"]
+voice-coreml = ["voice", "whisper-rs/coreml"]

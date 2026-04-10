@@ -130,6 +130,11 @@ width    = 20
 height   = 70
 position = "right"   # "left" | "right"
 
+[panel]
+enabled  = true
+width    = 40        # terminal columns (cells)
+position = "right"   # "left" | "right"
+
 [[project]]
 name = "myproject"
 path = "~/Projects/myproject"
@@ -179,6 +184,71 @@ Claude Code hooks call `hive status <state>` (one of `working`, `waiting`, `done
 
 The dock reads the same state, so a worker with a pending notification stays visually "alive" in the dock (accent color, bright text) until you visit it or dismiss it; once dismissed it grays out.
 
+## Voice control (MVP, opt-in)
+
+hive ships with an experimental voice layer behind the `voice` cargo feature. It runs a local whisper.cpp model — no cloud STT — and is designed as a push-to-talk control surface for everything hive already does (popups, jumping to workers, accepting waiting prompts, dictating into Claude).
+
+### Build
+
+```bash
+cargo install --path . --features voice
+```
+
+This pulls in `whisper-rs` (which builds whisper.cpp via cmake) and `cpal` for audio capture. The default build is unaffected; if you don't pass `--features voice`, none of this is compiled in.
+
+### Set up
+
+1. Download a ggml whisper model — `base.en` is a good starting point:
+
+   ```bash
+   mkdir -p ~/.cache/whisper
+   curl -L -o ~/.cache/whisper/ggml-base.en.bin \
+     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+   ```
+
+2. Enable voice in `~/.config/hive/config.toml`:
+
+   ```toml
+   [voice]
+   enabled  = true
+   model    = "~/.cache/whisper/ggml-base.en.bin"
+   hotkey   = "M-v"   # PTT toggle (tmux key, no prefix)
+   language = "en"
+   ```
+
+3. `hive launch` — the daemon spawns automatically and binds the hotkey.
+
+### How it works
+
+- `hive launch` spawns `hive voice` as a background daemon (one process, one model load).
+- The daemon writes its PID to `/tmp/hive-voice.pid` and waits on `SIGUSR1`.
+- `Alt-v` (or whatever you bound) runs `hive voice-trigger`, which sends `SIGUSR1` to the daemon. First press starts recording, second press stops and transcribes.
+- The transcript is parsed against a fixed grammar; the matched intent is dispatched via tmux.
+- `hive stop` also tears down the voice daemon.
+
+### Voice grammar (MVP)
+
+| Say | Action |
+|-----|--------|
+| "picker", "open picker", "sessions" | Open session picker |
+| "dock", "workers", "open dock" | Toggle/focus the worker dock |
+| "stats", "dashboard" | Open stats dashboard |
+| "notifications", "notifs" | Open the notification list |
+| "yes" / "accept" / "approve" / "ok" / "1" | Send `1<Enter>` to the most recently waiting Claude pane |
+| "jump to <session>" / "go to <session>" / "<session>" | Switch to that tmux session (fuzzy-matched) |
+| "tell claude <prompt>" / "dictate <text>" | Type the rest of the phrase into the focused pane and press Enter |
+| "cancel" / "stop" / "never mind" | No-op (drop the recording) |
+
+The fuzzy matcher strips spaces and dashes from both query and session names, so "rust foo" matches `rust-foo`.
+
+### Known MVP limitations
+
+- Push-to-talk is toggle-based (press to start, press again to stop) — there is no hold-to-talk.
+- Resampling is linear interpolation. Whisper tolerates it, but transcript quality on a 48kHz mic is worse than running whisper at native 16kHz.
+- "Accept" targets the most recently `waiting` pane it finds in `$XDG_STATE_HOME/hive/panes/`. If you have multiple workers waiting, it picks the newest one.
+- Dictation sends keys to whichever pane tmux currently considers focused — if you're in the panel pane it'll go there.
+- No TTS yet; feedback is via `tmux display-message` ("recording", "transcribing", the matched intent label, etc.).
+
 ## Subcommands
 
 | Command | Description |
@@ -190,4 +260,6 @@ The dock reads the same state, so a worker with a pending notification stays vis
 | `stats` | Stats dashboard (used internally by tmux keybinding) |
 | `watch` | Run the overlay (used internally by launch) |
 | `status <state>` | Record agent status for the current tmux pane (used by Claude hooks or other agents) |
-| `stop` | Stop the overlay process |
+| `voice` | Voice control daemon (only built with `--features voice`) |
+| `voice-trigger` | Toggle the voice daemon's recording state (only built with `--features voice`) |
+| `stop` | Stop the overlay process (and voice daemon if running) |
